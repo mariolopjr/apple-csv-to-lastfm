@@ -76,5 +76,5 @@ func main() {
 	if err != nil {
 		log.Fatalf("error creating csv: %s", err)
 	}
-	log.Printf("Number of Apple Music plays converted: %d", len(appleMusic.Plays))
+	log.Printf("Number of Apple Music plays converted: %d", len(lastFm.Scrobbles))
 }
