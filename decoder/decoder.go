@@ -32,7 +32,6 @@ func (amp *AppleMusic) Unmarshal(srcFilePath string, useMusicBrainz bool) error 
 	if err != nil {
 		return err
 	}
-
 	defer zipReader.Close()
 
 	// Connect to MusicBrainz DB
@@ -55,12 +54,13 @@ func (amp *AppleMusic) Unmarshal(srcFilePath string, useMusicBrainz bool) error 
 
 	for _, file := range zipReader.File {
 		if strings.Contains(file.Name, "Apple_Media_Services.zip") {
-			zipReader, err := file.Open()
+			mediaReader, err := file.Open()
 			if err != nil {
 				return err
 			}
+			defer mediaReader.Close()
 
-			mediaZip, err := NewZipFromReader(zipReader, file.FileInfo().Size())
+			mediaZip, err := NewZipFromReader(mediaReader, file.FileInfo().Size())
 			if err != nil {
 				return err
 			}
@@ -72,6 +72,7 @@ func (amp *AppleMusic) Unmarshal(srcFilePath string, useMusicBrainz bool) error 
 					if err != nil {
 						return err
 					}
+					defer libraryReader.Close()
 
 					libraryZip, err := NewZipFromReader(libraryReader, mediaFile.FileInfo().Size())
 					if err != nil {
@@ -218,7 +219,7 @@ func (amp *AppleMusic) Unmarshal(srcFilePath string, useMusicBrainz bool) error 
 					if useMusicBrainz {
 						_, err := queryMusicBrainzDatabase(notFound)
 						if err != nil {
-							log.Printf("error getting results from musicbrainz: err", err)
+							log.Printf("error getting results from musicbrainz: %v", err)
 						}
 					}
 
