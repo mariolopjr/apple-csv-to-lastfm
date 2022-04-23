@@ -19,6 +19,7 @@ import (
 var (
 	inputFilePath  string
 	outputFilePath string
+	useMusicBrainz bool
 )
 
 func init() {
@@ -31,6 +32,7 @@ func init() {
 
 	flag.StringVar(&inputFilePath, "apple-music-export-path", defaultInputFile, "The absolute path (location) of a Apple Music .zip data export file")
 	flag.StringVar(&outputFilePath, "lastfm-output-path", defaultOutputFile, "The absolute path to where you want to export the CSV to import into Maloja")
+	//flag.BoolVar(&useMusicBrainz, "use-musicbrainz", false, "Lookup unmatched tracks using MusicBrainz DB (follow instructions in README)")
 }
 
 func main() {
@@ -42,7 +44,7 @@ func main() {
 
 	// Decode Apple Music Export
 	var appleMusic decoder.AppleMusic
-	err := appleMusic.Unmarshal(inputFilePath)
+	err := appleMusic.Unmarshal(inputFilePath, useMusicBrainz)
 	if err != nil {
 		log.Fatal(err)
 	}

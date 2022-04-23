@@ -3,6 +3,7 @@ package decoder
 import (
 	"archive/zip"
 	"bytes"
+	"database/sql"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -13,15 +14,44 @@ import (
 	"time"
 
 	"github.com/jszwec/csvutil"
+	_ "github.com/lib/pq"
 )
 
-func (amp *AppleMusic) Unmarshal(srcFilePath string) error {
+const (
+	host     = "localhost"
+	port     = 5432
+	user     = "musicbrainz"
+	password = "musicbrainz"
+	dbname   = "musicbrainz_db"
+)
+
+var db *sql.DB
+
+func (amp *AppleMusic) Unmarshal(srcFilePath string, useMusicBrainz bool) error {
 	zipReader, err := zip.OpenReader(srcFilePath)
 	if err != nil {
 		return err
 	}
 
 	defer zipReader.Close()
+
+	// Connect to MusicBrainz DB
+	if useMusicBrainz {
+		psqlInfo := fmt.Sprintf("host=%s port=%d user=%s "+
+			"password=%s dbname=%s sslmode=disable",
+			host, port, user, password, dbname)
+
+		db, err = sql.Open("postgres", psqlInfo)
+		if err != nil {
+			log.Printf("error connecting to MusicBrainz database: %v", err)
+		}
+		defer db.Close()
+
+		err = db.Ping()
+		if err != nil {
+			log.Printf("error pinging MusicBrainz database: %v", err)
+		}
+	}
 
 	for _, file := range zipReader.File {
 		if strings.Contains(file.Name, "Apple_Media_Services.zip") {
@@ -35,7 +65,6 @@ func (amp *AppleMusic) Unmarshal(srcFilePath string) error {
 				return err
 			}
 
-			var libraryCount int
 			for _, mediaFile := range mediaZip.File {
 				// Build list of library tracks
 				if strings.Contains(mediaFile.Name, "Apple Music Library Tracks.json.zip") {
@@ -72,7 +101,6 @@ func (amp *AppleMusic) Unmarshal(srcFilePath string) error {
 							for _, track := range temp.Tracks {
 								if track.Album != "" && track.Title != "" {
 									if track.Artist != "" {
-										libraryCount++
 										if _, ok := amp.Tracks[track.Artist]; !ok {
 											amp.Tracks[track.Artist] = make([]Track, 0, 10)
 										}
@@ -94,6 +122,7 @@ func (amp *AppleMusic) Unmarshal(srcFilePath string) error {
 
 				// Build list of plays, grab album from library tracks
 				if strings.Contains(mediaFile.Name, "Apple Music Play Activity.csv") {
+					notFound := make([]Play, 0, 100)
 					br, err := mediaFile.Open()
 					if err != nil {
 						return err
@@ -181,10 +210,18 @@ func (amp *AppleMusic) Unmarshal(srcFilePath string) error {
 							}
 						}
 						if p.AlbumName == "" {
+							notFound = append(notFound, p)
 							continue
 						}
 						amp.Plays = append(amp.Plays, p)
 					}
+					if useMusicBrainz {
+						_, err := queryMusicBrainzDatabase(notFound)
+						if err != nil {
+							log.Printf("error getting results from musicbrainz: err", err)
+						}
+					}
+
 					return nil
 				}
 			}
@@ -224,3 +261,84 @@ func (amp AppleMusic) Less(i, j int) bool {
 	return amp.Plays[i].PlayTimestamp.UnixMilli() > amp.Plays[j].PlayTimestamp.UnixMilli()
 }
 func (amp AppleMusic) Swap(i, j int) { amp.Plays[i], amp.Plays[j] = amp.Plays[j], amp.Plays[i] }
+
+type song struct {
+	artist string
+	album  string
+	title  string
+}
+
+func queryMusicBrainzDatabase(plays []Play) ([]Play, error) {
+	sqlStatement := `
+SELECT
+	A.name, R.name, T.name
+FROM
+	track T INNER JOIN
+	medium M ON M.id = T.medium INNER JOIN
+	release R ON R.id = M.release INNER JOIN
+	artist A ON A.id = R.artist_credit
+WHERE
+	T.name ~* $1 AND
+	A.name ~* $2
+`
+
+	err := db.Ping()
+	if err != nil {
+		return nil, err
+	}
+
+	// Iterate through 1000 results
+	var iter int
+	processed := make([]Play, 0, len(plays))
+	for {
+		bucket := make(map[string]song)
+		artists, titles := playsToString(plays[iter : iter+1000])
+		log.Println(artists, titles)
+
+		rows, err := db.Query(sqlStatement, titles, artists)
+		if err != nil {
+			log.Println(err)
+			break
+		}
+
+		defer rows.Close()
+
+		var artist, album, title string
+		for rows.Next() {
+			err := rows.Scan(&artist, &album, &title)
+			if err != nil {
+				fmt.Println(err)
+				break
+			}
+
+			bucket[artist] = song{artist: artist, album: album, title: title}
+		}
+
+		log.Print(bucket)
+		break
+	}
+	return processed, nil
+}
+
+func playsToString(plays []Play) (string, string) {
+	var artists, titles string
+
+	for _, play := range plays {
+		if artists == "" && titles == "" {
+			artists += play.ArtistName
+			titles += play.SongName
+			continue
+		}
+
+		artists += fmt.Sprintf("|%s", play.ArtistName)
+		titles += fmt.Sprintf("|%s", play.SongName)
+	}
+
+	for _, c := range "(){}*" {
+		char := string(c)
+		artists = strings.ReplaceAll(artists, char, "\\"+char)
+		titles = strings.ReplaceAll(titles, char, "\\"+char)
+	}
+
+	return artists, titles
+}

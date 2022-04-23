@@ -2,8 +2,6 @@ package encoder
 
 import (
 	"fmt"
-	"strings"
-	"time"
 
 	"github.com/mariolopjr/apple-csv-to-lastfm/decoder"
 )
@@ -18,7 +16,7 @@ func (lfp *LastFm) Marshal(amp decoder.AppleMusic) error {
 			Artist:         play.ArtistName,
 			Album:          play.AlbumName,
 			Title:          play.SongName,
-			DateTimePlayed: strings.TrimSuffix(play.PlayTimestamp.Format(time.RFC822), " UTC"),
+			DateTimePlayed: play.PlayTimestamp.Format("02 Jan 2006 15:04"),
 		}
 
 		// Remove dupes
